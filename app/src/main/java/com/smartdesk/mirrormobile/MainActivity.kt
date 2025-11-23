@@ -16,7 +16,9 @@ import androidx.compose.ui.Modifier
 import com.smartdesk.mirrormobile.network.ConnectionManager
 import com.smartdesk.mirrormobile.network.ConnectionState
 import com.smartdesk.mirrormobile.ui.screens.ConnectScreen
+import com.smartdesk.mirrormobile.ui.screens.FullScreenRemoteControl
 import com.smartdesk.mirrormobile.ui.screens.HomeScreen
+import com.smartdesk.mirrormobile.ui.screens.QrScannerScreen
 import com.smartdesk.mirrormobile.ui.theme.SmartDeskDark
 import com.smartdesk.mirrormobile.ui.theme.SmartDeskMirrorMobileTheme
 
@@ -39,6 +41,9 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun AppNavigation() {
     var currentScreen by remember { mutableStateOf<AppScreen>(AppScreen.Connect) }
+    var scannedIpAddress by remember { mutableStateOf("") }
+    var scannedConnectionCode by remember { mutableStateOf("") }
+
     val connectionManager = remember { ConnectionManager() }
     val connectionState by connectionManager.connectionState.collectAsState()
 
@@ -54,13 +59,21 @@ fun AppNavigation() {
             ConnectScreen(
                 connectionManager = connectionManager,
                 onBack = { /* Stay on connect screen */ },
-                onConnected = { currentScreen = AppScreen.Home }
+                onConnected = { currentScreen = AppScreen.Home },
+                onOpenQrScanner = { currentScreen = AppScreen.QrScanner },
+                prefillIp = scannedIpAddress,
+                prefillCode = scannedConnectionCode
             )
         }
         AppScreen.Home -> {
             HomeScreen(
                 connectionManager = connectionManager,
-                onConnectPC = { currentScreen = AppScreen.Connect },
+                onConnectPC = {
+                    scannedIpAddress = ""
+                    scannedConnectionCode = ""
+                    currentScreen = AppScreen.Connect
+                },
+                onStartFullScreenRemoteControl = { currentScreen = AppScreen.FullScreenRemoteControl },
                 onStartVoice = {
                     // TODO: Implement voice AI screen
                 },
@@ -69,10 +82,28 @@ fun AppNavigation() {
                 }
             )
         }
+        AppScreen.QrScanner -> {
+            QrScannerScreen(
+                onBack = { currentScreen = AppScreen.Connect },
+                onQrScanned = { ip, code ->
+                    scannedIpAddress = ip
+                    scannedConnectionCode = code
+                    currentScreen = AppScreen.Connect
+                }
+            )
+        }
+        AppScreen.FullScreenRemoteControl -> {
+            FullScreenRemoteControl(
+                connectionManager = connectionManager,
+                onBack = { currentScreen = AppScreen.Home }
+            )
+        }
     }
 }
 
 sealed class AppScreen {
     object Connect : AppScreen()
     object Home : AppScreen()
+    object QrScanner : AppScreen()
+    object FullScreenRemoteControl : AppScreen()
 }

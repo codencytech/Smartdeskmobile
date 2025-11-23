@@ -1,26 +1,60 @@
 package com.smartdesk.mirrormobile.ui.screens
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Divider
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.smartdesk.mirrormobile.ui.theme.*
+import coil.compose.AsyncImage
 import com.smartdesk.mirrormobile.network.ConnectionManager
 import com.smartdesk.mirrormobile.network.ConnectionState
+import com.smartdesk.mirrormobile.ui.theme.SmartDeskAccent
+import com.smartdesk.mirrormobile.ui.theme.SmartDeskAccent2
+import com.smartdesk.mirrormobile.ui.theme.SmartDeskCard
+import com.smartdesk.mirrormobile.ui.theme.SmartDeskDark
+import com.smartdesk.mirrormobile.ui.theme.SmartDeskGlass
+import com.smartdesk.mirrormobile.ui.theme.SmartDeskMuted
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -29,6 +63,7 @@ import kotlinx.coroutines.launch
 fun HomeScreen(
     connectionManager: ConnectionManager = remember { ConnectionManager() },
     onConnectPC: () -> Unit,
+    onStartFullScreenRemoteControl: () -> Unit,
     onStartVoice: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
@@ -179,12 +214,16 @@ fun HomeScreen(
                 }
             }
 
-            // Screen Preview Card
+            // Screen Preview Card - Make it clickable
             item {
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(250.dp),
+                        .height(250.dp)
+                        .clickable(
+                            enabled = connectionState == ConnectionState.CONNECTED,
+                            onClick = onStartFullScreenRemoteControl
+                        ),
                     colors = CardDefaults.cardColors(containerColor = SmartDeskCard),
                     elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
                     shape = RoundedCornerShape(16.dp)
@@ -197,27 +236,27 @@ fun HomeScreen(
                     ) {
                         if (connectionState == ConnectionState.CONNECTED) {
                             if (screenFrame != null) {
-                                // TODO: Show actual screen preview with Coil
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                // Show actual screen preview
+                                AsyncImage(
+                                    model = screenFrame,
+                                    contentDescription = "PC Screen Preview",
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentScale = ContentScale.Crop
+                                )
+
+                                // Overlay with click instruction
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(Color.Black.copy(alpha = 0.3f)),
+                                    contentAlignment = Alignment.BottomCenter
                                 ) {
-                                    Icon(
-                                        Icons.Default.Computer,
-                                        contentDescription = "Screen Preview",
-                                        tint = SmartDeskAccent,
-                                        modifier = Modifier.size(48.dp)
-                                    )
                                     Text(
-                                        text = "Screen Frame Received",
-                                        color = SmartDeskAccent,
-                                        textAlign = TextAlign.Center
-                                    )
-                                    Text(
-                                        text = "Preview will be displayed here",
-                                        color = SmartDeskMuted,
-                                        textAlign = TextAlign.Center,
-                                        fontSize = 12.sp
+                                        text = "Tap to open full screen control",
+                                        color = Color.White,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        modifier = Modifier.padding(16.dp)
                                     )
                                 }
                             } else {
@@ -304,8 +343,10 @@ fun HomeScreen(
                         modifier = Modifier.weight(1f)
                     )
                 }
+            }
 
-                // Second row of quick actions
+            // Second row of quick actions
+            item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -332,6 +373,27 @@ fun HomeScreen(
                                 println("Command result: $result")
                             }
                         },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+
+            // Remote Control Button
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    QuickActionButton(
+                        text = "Remote Control",
+                        enabled = connectionState == ConnectionState.CONNECTED,
+                        onClick = onStartFullScreenRemoteControl,
+                        modifier = Modifier.weight(1f)
+                    )
+                    QuickActionButton(
+                        text = "Voice AI",
+                        enabled = connectionState == ConnectionState.CONNECTED,
+                        onClick = onStartVoice,
                         modifier = Modifier.weight(1f)
                     )
                 }

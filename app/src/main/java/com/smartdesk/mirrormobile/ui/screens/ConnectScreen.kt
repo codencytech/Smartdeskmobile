@@ -10,10 +10,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.QrCode
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -58,15 +62,29 @@ import kotlinx.coroutines.launch
 fun ConnectScreen(
     connectionManager: ConnectionManager,
     onBack: () -> Unit,
-    onConnected: () -> Unit
+    onOpenQrScanner: () -> Unit,
+    onConnected: () -> Unit,
+    prefillIp: String = "",
+    prefillCode: String = ""
 ) {
-    var connectionCode by remember { mutableStateOf("") }
-    var pcIpAddress by remember { mutableStateOf("192.168.1.100") } // Default IP
+    var connectionCode by remember { mutableStateOf(prefillCode) }
+    var pcIpAddress by remember { mutableStateOf(if (prefillIp.isNotEmpty()) prefillIp else "192.168.1.100") }
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
     val connectionState by connectionManager.connectionState.collectAsState()
     val coroutineScope = rememberCoroutineScope()
+    val scrollState = rememberScrollState()
+
+    // Auto-fill when prefill data changes
+    LaunchedEffect(prefillIp, prefillCode) {
+        if (prefillIp.isNotEmpty()) {
+            pcIpAddress = prefillIp
+        }
+        if (prefillCode.isNotEmpty()) {
+            connectionCode = prefillCode
+        }
+    }
 
     // Navigate to home when connected
     LaunchedEffect(connectionState) {
@@ -101,258 +119,295 @@ fun ConnectScreen(
                 .fillMaxSize()
                 .background(SmartDeskDark)
                 .padding(paddingValues)
-                .padding(24.dp),
+                .verticalScroll(scrollState), // Added vertical scroll here
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(24.dp)
         ) {
-            // Connection Illustration
-            Icon(
-                Icons.Default.QrCode,
-                contentDescription = "QR Code",
-                tint = SmartDeskAccent,
-                modifier = Modifier.size(80.dp)
-            )
-
-            Text(
-                text = "Enter Connection Details",
-                color = SmartDeskAccent,
-                fontSize = 22.sp,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center
-            )
-
-            // PC IP Address Input
             Column(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalAlignment = Alignment.Start,
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(
-                    text = "PC IP Address",
-                    color = SmartDeskMuted,
-                    fontSize = 14.sp
-                )
-                OutlinedTextField(
-                    value = pcIpAddress,
-                    onValueChange = { pcIpAddress = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("192.168.1.100") },
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = SmartDeskMuted,
-                        unfocusedTextColor = SmartDeskMuted,
-                        focusedBorderColor = SmartDeskAccent,
-                        unfocusedBorderColor = SmartDeskMuted,
-                        cursorColor = SmartDeskAccent,
-                        focusedLabelColor = SmartDeskAccent,
-                        unfocusedLabelColor = SmartDeskMuted,
-                        focusedPlaceholderColor = SmartDeskMuted.copy(alpha = 0.7f),
-                        unfocusedPlaceholderColor = SmartDeskMuted.copy(alpha = 0.7f)
-                    )
-                )
-                Text(
-                    text = "Find PC IP: Run 'ipconfig' in Command Prompt",
-                    color = SmartDeskMuted.copy(alpha = 0.7f),
-                    fontSize = 12.sp
-                )
-            }
-
-            // Connection Code Input
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalAlignment = Alignment.Start,
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(
-                    text = "6-Digit Connection Code",
-                    color = SmartDeskMuted,
-                    fontSize = 14.sp
-                )
-                OutlinedTextField(
-                    value = connectionCode,
-                    onValueChange = {
-                        if (it.length <= 6 && it.all { char -> char.isDigit() }) {
-                            connectionCode = it
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("123456") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = SmartDeskMuted,
-                        unfocusedTextColor = SmartDeskMuted,
-                        focusedBorderColor = SmartDeskAccent,
-                        unfocusedBorderColor = SmartDeskMuted,
-                        cursorColor = SmartDeskAccent,
-                        focusedLabelColor = SmartDeskAccent,
-                        unfocusedLabelColor = SmartDeskMuted,
-                        focusedPlaceholderColor = SmartDeskMuted.copy(alpha = 0.7f),
-                        unfocusedPlaceholderColor = SmartDeskMuted.copy(alpha = 0.7f)
-                    )
-                )
-                Text(
-                    text = "Find this code on your PC screen",
-                    color = SmartDeskMuted.copy(alpha = 0.7f),
-                    fontSize = 12.sp
-                )
-            }
-
-            // Status Display
-            when (connectionState) {
-                ConnectionState.CONNECTING -> {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        CircularProgressIndicator(color = SmartDeskAccent)
-                        Text(
-                            text = "Waiting for PC approval...",
-                            color = SmartDeskMuted,
-                            textAlign = TextAlign.Center
-                        )
-                        Text(
-                            text = "Check your PC for connection request",
-                            color = SmartDeskMuted.copy(alpha = 0.7f),
-                            fontSize = 12.sp,
-                            textAlign = TextAlign.Center
-                        )
-                    }
-                }
-                ConnectionState.ERROR -> {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            text = "❌ Connection Failed",
-                            color = Color.Red,
-                            fontWeight = FontWeight.Bold,
-                            textAlign = TextAlign.Center
-                        )
-                        Text(
-                            text = errorMessage ?: "Check IP address and code",
-                            color = SmartDeskMuted,
-                            textAlign = TextAlign.Center
-                        )
-                        Text(
-                            text = "Make sure:\n• PC app is running\n• Correct IP address\n• Codes match\n• Same WiFi network",
-                            color = SmartDeskMuted.copy(alpha = 0.7f),
-                            fontSize = 12.sp,
-                            textAlign = TextAlign.Center
-                        )
-                    }
-                }
-                else -> {
-                    // Show connection instructions when idle
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            text = "How to connect:",
-                            color = SmartDeskAccent,
-                            fontWeight = FontWeight.Medium,
-                            textAlign = TextAlign.Center
-                        )
-                        Text(
-                            text = "1. Find PC IP (ipconfig)\n2. Enter 6-digit code from PC\n3. Click Connect\n4. Accept on PC",
-                            color = SmartDeskMuted,
-                            textAlign = TextAlign.Center,
-                            fontSize = 14.sp
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.weight(1f))
-
-            // Connect Button
-            Button(
-                onClick = {
-                    if (connectionCode.length != 6) {
-                        errorMessage = "Please enter a 6-digit code"
-                        return@Button
-                    }
-
-                    if (pcIpAddress.isBlank()) {
-                        errorMessage = "Please enter PC IP address"
-                        return@Button
-                    }
-
-                    isLoading = true
-                    errorMessage = null
-
-                    coroutineScope.launch {
-                        try {
-                            // Test connection first
-                            Log.d("ConnectScreen", "Testing connection to: $pcIpAddress")
-                            val connectionTest = connectionManager.testConnection(pcIpAddress)
-
-                            if (!connectionTest) {
-                                errorMessage = "Cannot connect to PC at $pcIpAddress\n\nMake sure:\n• PC app is running\n• Correct IP address\n• Same WiFi network\n• Port 8000 is open"
-                                isLoading = false
-                                return@launch
-                            }
-
-                            // Update base URL with provided IP
-                            connectionManager.updateBaseUrl(pcIpAddress)
-
-                            // Attempt connection
-                            Log.d("ConnectScreen", "Starting connection with code: $connectionCode")
-                            val success = connectionManager.connectWithCode(connectionCode)
-
-                            if (!success) {
-                                errorMessage = "Connection failed.\n\nPossible issues:\n• Wrong connection code\n• PC rejected connection\n• Network firewall blocking\n\nCheck PC for connection request"
-                            }
-                        } catch (e: Exception) {
-                            Log.e("ConnectScreen", "Connection error: ${e.message}", e)
-                            errorMessage = "Network error: ${e.message}\n\nCheck:\n• PC IP address\n• WiFi connection\n• Firewall settings"
-                        } finally {
-                            isLoading = false
-                        }
-                    }
-                },
-                enabled = connectionCode.length == 6 && pcIpAddress.isNotBlank() &&
-                        !isLoading && connectionState != ConnectionState.CONNECTING,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(56.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = SmartDeskAccent,
-                    contentColor = Color.Black
-                )
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(24.dp)
             ) {
+                // Connection Illustration
+                Icon(
+                    Icons.Default.QrCode,
+                    contentDescription = "QR Code",
+                    tint = SmartDeskAccent,
+                    modifier = Modifier.size(80.dp)
+                )
+
                 Text(
-                    text = when (connectionState) {
-                        ConnectionState.CONNECTING -> "CONNECTING..."
-                        ConnectionState.CONNECTED -> "CONNECTED"
-                        else -> "CONNECT TO PC"
-                    },
+                    text = "Enter Connection Details",
+                    color = SmartDeskAccent,
+                    fontSize = 22.sp,
                     fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center
+                )
+
+                // QR Scanner Button
+                Button(
+                    onClick = onOpenQrScanner,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = SmartDeskAccent2,
+                        contentColor = Color.White
+                    )
+                ) {
+                    Icon(
+                        Icons.Default.QrCodeScanner,
+                        contentDescription = "Scan QR Code",
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "SCAN QR CODE",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp
+                    )
+                }
+
+                Text(
+                    text = "OR",
+                    color = SmartDeskMuted,
                     fontSize = 16.sp
                 )
-            }
 
-            // Quick Help Section
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = SmartDeskCard)
-            ) {
+                // PC IP Address Input
                 Column(
-                    modifier = Modifier.padding(16.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.Start,
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        text = "Connection Help",
-                        color = SmartDeskAccent,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold
+                        text = "PC IP Address",
+                        color = SmartDeskMuted,
+                        fontSize = 14.sp
+                    )
+                    OutlinedTextField(
+                        value = pcIpAddress,
+                        onValueChange = { pcIpAddress = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text("192.168.1.100") },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = SmartDeskMuted,
+                            unfocusedTextColor = SmartDeskMuted,
+                            focusedBorderColor = SmartDeskAccent,
+                            unfocusedBorderColor = SmartDeskMuted,
+                            cursorColor = SmartDeskAccent,
+                            focusedLabelColor = SmartDeskAccent,
+                            unfocusedLabelColor = SmartDeskMuted,
+                            focusedPlaceholderColor = SmartDeskMuted.copy(alpha = 0.7f),
+                            unfocusedPlaceholderColor = SmartDeskMuted.copy(alpha = 0.7f)
+                        )
                     )
                     Text(
-                        text = "• Find PC IP: Run 'ipconfig' in Command Prompt\n• Look for 'IPv4 Address' under your WiFi\n• Make sure PC and phone are on same WiFi",
-                        color = SmartDeskMuted,
+                        text = "Find PC IP: Run 'ipconfig' in Command Prompt",
+                        color = SmartDeskMuted.copy(alpha = 0.7f),
                         fontSize = 12.sp
                     )
+                }
+
+                // Connection Code Input
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.Start,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "6-Digit Connection Code",
+                        color = SmartDeskMuted,
+                        fontSize = 14.sp
+                    )
+                    OutlinedTextField(
+                        value = connectionCode,
+                        onValueChange = {
+                            if (it.length <= 6 && it.all { char -> char.isDigit() }) {
+                                connectionCode = it
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text("123456") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = SmartDeskMuted,
+                            unfocusedTextColor = SmartDeskMuted,
+                            focusedBorderColor = SmartDeskAccent,
+                            unfocusedBorderColor = SmartDeskMuted,
+                            cursorColor = SmartDeskAccent,
+                            focusedLabelColor = SmartDeskAccent,
+                            unfocusedLabelColor = SmartDeskMuted,
+                            focusedPlaceholderColor = SmartDeskMuted.copy(alpha = 0.7f),
+                            unfocusedPlaceholderColor = SmartDeskMuted.copy(alpha = 0.7f)
+                        )
+                    )
+                    Text(
+                        text = "Find this code on your PC screen",
+                        color = SmartDeskMuted.copy(alpha = 0.7f),
+                        fontSize = 12.sp
+                    )
+                }
+
+                // Status Display
+                when (connectionState) {
+                    ConnectionState.CONNECTING -> {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            CircularProgressIndicator(color = SmartDeskAccent)
+                            Text(
+                                text = "Waiting for PC approval...",
+                                color = SmartDeskMuted,
+                                textAlign = TextAlign.Center
+                            )
+                            Text(
+                                text = "Check your PC for connection request",
+                                color = SmartDeskMuted.copy(alpha = 0.7f),
+                                fontSize = 12.sp,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                    ConnectionState.ERROR -> {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "❌ Connection Failed",
+                                color = Color.Red,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center
+                            )
+                            Text(
+                                text = errorMessage ?: "Check IP address and code",
+                                color = SmartDeskMuted,
+                                textAlign = TextAlign.Center
+                            )
+                            Text(
+                                text = "Make sure:\n• PC app is running\n• Correct IP address\n• Codes match\n• Same WiFi network",
+                                color = SmartDeskMuted.copy(alpha = 0.7f),
+                                fontSize = 12.sp,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                    else -> {
+                        // Show connection instructions when idle
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "How to connect:",
+                                color = SmartDeskAccent,
+                                fontWeight = FontWeight.Medium,
+                                textAlign = TextAlign.Center
+                            )
+                            Text(
+                                text = "1. Find PC IP (ipconfig)\n2. Enter 6-digit code from PC\n3. Click Connect\n4. Accept on PC\n\nOR\n\nScan QR code from PC",
+                                color = SmartDeskMuted,
+                                textAlign = TextAlign.Center,
+                                fontSize = 14.sp
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(32.dp))
+
+                // Connect Button
+                Button(
+                    onClick = {
+                        if (connectionCode.length != 6) {
+                            errorMessage = "Please enter a 6-digit code"
+                            return@Button
+                        }
+
+                        if (pcIpAddress.isBlank()) {
+                            errorMessage = "Please enter PC IP address"
+                            return@Button
+                        }
+
+                        isLoading = true
+                        errorMessage = null
+
+                        coroutineScope.launch {
+                            try {
+                                // Test connection first
+                                Log.d("ConnectScreen", "Testing connection to: $pcIpAddress")
+                                val connectionTest = connectionManager.testConnection(pcIpAddress)
+
+                                if (!connectionTest) {
+                                    errorMessage = "Cannot connect to PC at $pcIpAddress\n\nMake sure:\n• PC app is running\n• Correct IP address\n• Same WiFi network\n• Port 8000 is open"
+                                    isLoading = false
+                                    return@launch
+                                }
+
+                                // Update base URL with provided IP
+                                connectionManager.updateBaseUrl(pcIpAddress)
+
+                                // Attempt connection
+                                Log.d("ConnectScreen", "Starting connection with code: $connectionCode")
+                                val success = connectionManager.connectWithCode(connectionCode)
+
+                                if (!success) {
+                                    errorMessage = "Connection failed.\n\nPossible issues:\n• Wrong connection code\n• PC rejected connection\n• Network firewall blocking\n\nCheck PC for connection request"
+                                }
+                            } catch (e: Exception) {
+                                Log.e("ConnectScreen", "Connection error: ${e.message}", e)
+                                errorMessage = "Network error: ${e.message}\n\nCheck:\n• PC IP address\n• WiFi connection\n• Firewall settings"
+                            } finally {
+                                isLoading = false
+                            }
+                        }
+                    },
+                    enabled = connectionCode.length == 6 && pcIpAddress.isNotBlank() &&
+                            !isLoading && connectionState != ConnectionState.CONNECTING,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = SmartDeskAccent,
+                        contentColor = Color.Black
+                    )
+                ) {
+                    Text(
+                        text = when (connectionState) {
+                            ConnectionState.CONNECTING -> "CONNECTING..."
+                            ConnectionState.CONNECTED -> "CONNECTED"
+                            else -> "CONNECT TO PC"
+                        },
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp
+                    )
+                }
+
+                // Quick Help Section
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = SmartDeskCard)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "Connection Help",
+                            color = SmartDeskAccent,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "• Find PC IP: Run 'ipconfig' in Command Prompt\n• Look for 'IPv4 Address' under your WiFi\n• Make sure PC and phone are on same WiFi\n• Or scan QR code from PC app for automatic setup",
+                            color = SmartDeskMuted,
+                            fontSize = 12.sp
+                        )
+                    }
                 }
             }
         }

@@ -46,11 +46,6 @@ data class CommandResponse(
 )
 
 @Serializable
-data class ScreenResponse(
-    val frame: String
-)
-
-@Serializable
 data class SystemMetricsResponse(
     val cpu: String,
     val ram: String,
@@ -68,7 +63,7 @@ interface PcAgentApiService {
     suspend fun getConnectionStatus(@Path("code") code: String): ConnectionStatusResponse
 
     @GET("mobile/screen")
-    suspend fun getScreen(@Header("x-connection-code") code: String): ScreenResponse
+    suspend fun getScreen(@Header("x-connection-code") code: String): String
 
     @POST("mobile/execute-command")
     suspend fun executeCommand(

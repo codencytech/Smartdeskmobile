@@ -74,4 +74,19 @@ dependencies {
 
     // Coil for image loading (for screen preview)
     implementation("io.coil-kt:coil-compose:2.4.0")
+
+    // CameraX
+    implementation("androidx.camera:camera-camera2:1.3.0")
+    implementation("androidx.camera:camera-lifecycle:1.3.0")
+    implementation("androidx.camera:camera-view:1.3.0")
+
+    // ML Kit Barcode Scanning
+    implementation("com.google.mlkit:barcode-scanning:17.2.0")
+
+    // Permissions
+    implementation("com.google.accompanist:accompanist-permissions:0.31.5-beta")
+
+    implementation("org.json:json:20231013")
+
+    implementation("com.squareup.retrofit2:converter-scalars:2.9.0")
 }
