@@ -1,5 +1,6 @@
 package com.smartdesk.mirrormobile.ui.screens
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -35,18 +36,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
 import com.smartdesk.mirrormobile.network.ConnectionManager
 import com.smartdesk.mirrormobile.network.ConnectionState
 import com.smartdesk.mirrormobile.ui.theme.SmartDeskAccent
@@ -55,13 +55,12 @@ import com.smartdesk.mirrormobile.ui.theme.SmartDeskCard
 import com.smartdesk.mirrormobile.ui.theme.SmartDeskDark
 import com.smartdesk.mirrormobile.ui.theme.SmartDeskGlass
 import com.smartdesk.mirrormobile.ui.theme.SmartDeskMuted
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
-    connectionManager: ConnectionManager = remember { ConnectionManager() },
+    connectionManager: ConnectionManager,
     onConnectPC: () -> Unit,
     onStartFullScreenRemoteControl: () -> Unit,
     onStartVoice: () -> Unit,
@@ -69,18 +68,15 @@ fun HomeScreen(
 ) {
     val connectionState by connectionManager.connectionState.collectAsState()
     val systemMetrics by connectionManager.systemMetrics.collectAsState()
-    val screenFrame by connectionManager.screenFrame.collectAsState()
-
+    val screenBitmap by connectionManager.screenBitmap.collectAsState()
     val coroutineScope = rememberCoroutineScope()
 
-    // Auto-refresh when connected
+    // Start/stop streaming based on connection state (ConnectionManager owns the stream)
     LaunchedEffect(connectionState) {
         if (connectionState == ConnectionState.CONNECTED) {
-            while (true) {
-                connectionManager.fetchScreen()
-                connectionManager.fetchSystemMetrics()
-                delay(2000) // Refresh every 2 seconds
-            }
+            connectionManager.startScreenStream()
+        } else {
+            connectionManager.stopScreenStream()
         }
     }
 
@@ -133,7 +129,7 @@ fun HomeScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Connection Status Card
+            // Connection Status Card (keep your existing UI)
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -143,27 +139,20 @@ fun HomeScreen(
                 ) {
                     Column(
                         modifier = Modifier.padding(20.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        // Status Indicator
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(12.dp)
-                                    .clip(RoundedCornerShape(50))
-                                    .background(
-                                        when (connectionState) {
-                                            ConnectionState.CONNECTED -> SmartDeskAccent
-                                            ConnectionState.CONNECTING -> Color.Yellow
-                                            ConnectionState.ERROR -> Color.Red
-                                            else -> SmartDeskMuted
-                                        }
-                                    )
-                            )
+                        // Status Indicator row
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            val indicatorColor = when (connectionState) {
+                                ConnectionState.CONNECTED -> SmartDeskAccent
+                                ConnectionState.CONNECTING -> Color.Yellow
+                                ConnectionState.ERROR -> Color.Red
+                                else -> SmartDeskMuted
+                            }
+                            Box(modifier = Modifier
+                                .size(12.dp)
+                                .clip(RoundedCornerShape(50))
+                                .background(indicatorColor))
                             Text(
                                 text = when (connectionState) {
                                     ConnectionState.CONNECTED -> "Connected to PC"
@@ -172,7 +161,8 @@ fun HomeScreen(
                                     else -> "Disconnected"
                                 },
                                 color = SmartDeskMuted,
-                                fontSize = 16.sp
+                                fontSize = 16.sp,
+                                modifier = Modifier.padding(start = 8.dp)
                             )
                         }
 
@@ -214,14 +204,14 @@ fun HomeScreen(
                 }
             }
 
-            // Screen Preview Card - Make it clickable
+            // Screen Preview Card
             item {
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(250.dp)
                         .clickable(
-                            enabled = connectionState == ConnectionState.CONNECTED,
+                            enabled = connectionState == ConnectionState.CONNECTED && screenBitmap != null,
                             onClick = onStartFullScreenRemoteControl
                         ),
                     colors = CardDefaults.cardColors(containerColor = SmartDeskCard),
@@ -235,20 +225,17 @@ fun HomeScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         if (connectionState == ConnectionState.CONNECTED) {
-                            if (screenFrame != null) {
-                                // Show actual screen preview
-                                AsyncImage(
-                                    model = screenFrame,
+                            if (screenBitmap != null) {
+                                Image(
+                                    bitmap = screenBitmap!!.asImageBitmap(),
                                     contentDescription = "PC Screen Preview",
                                     modifier = Modifier.fillMaxSize(),
-                                    contentScale = ContentScale.Crop
+                                    contentScale = ContentScale.Fit
                                 )
-
-                                // Overlay with click instruction
                                 Box(
                                     modifier = Modifier
                                         .fillMaxSize()
-                                        .background(Color.Black.copy(alpha = 0.3f)),
+                                        .background(Color.Black.copy(alpha = 0.25f)),
                                     contentAlignment = Alignment.BottomCenter
                                 ) {
                                     Text(
@@ -256,7 +243,7 @@ fun HomeScreen(
                                         color = Color.White,
                                         fontSize = 14.sp,
                                         fontWeight = FontWeight.Medium,
-                                        modifier = Modifier.padding(16.dp)
+                                        modifier = Modifier.padding(12.dp)
                                     )
                                 }
                             } else {
@@ -264,15 +251,8 @@ fun HomeScreen(
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     verticalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    CircularProgressIndicator(
-                                        color = SmartDeskAccent,
-                                        modifier = Modifier.size(36.dp)
-                                    )
-                                    Text(
-                                        text = "Loading Screen...",
-                                        color = SmartDeskMuted,
-                                        textAlign = TextAlign.Center
-                                    )
+                                    CircularProgressIndicator(color = SmartDeskAccent, modifier = Modifier.size(36.dp))
+                                    Text(text = "Loading Screen...", color = SmartDeskMuted, textAlign = TextAlign.Center)
                                 }
                             }
                         } else {
@@ -280,25 +260,8 @@ fun HomeScreen(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Icon(
-                                    Icons.Default.Computer,
-                                    contentDescription = "PC Icon",
-                                    tint = SmartDeskMuted,
-                                    modifier = Modifier.size(48.dp)
-                                )
-                                Text(
-                                    text = "Connect to PC to see screen",
-                                    color = SmartDeskMuted,
-                                    textAlign = TextAlign.Center
-                                )
-                                if (connectionState == ConnectionState.ERROR) {
-                                    Text(
-                                        text = "Connection failed. Tap Connect to retry.",
-                                        color = Color.Red,
-                                        textAlign = TextAlign.Center,
-                                        fontSize = 12.sp
-                                    )
-                                }
+                                Icon(Icons.Default.Computer, contentDescription = "PC Icon", tint = SmartDeskMuted, modifier = Modifier.size(48.dp))
+                                Text(text = "Connect to PC to see screen", color = SmartDeskMuted, textAlign = TextAlign.Center)
                             }
                         }
                     }

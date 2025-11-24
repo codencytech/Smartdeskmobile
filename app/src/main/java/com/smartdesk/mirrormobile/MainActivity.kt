@@ -40,31 +40,47 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun AppNavigation() {
+    //--------- SCREEN STATE ----------
     var currentScreen by remember { mutableStateOf<AppScreen>(AppScreen.Connect) }
+
+    // For scanned QR values
     var scannedIpAddress by remember { mutableStateOf("") }
     var scannedConnectionCode by remember { mutableStateOf("") }
 
+    //--------- SINGLE GLOBAL CONNECTION MANAGER ----------
+    // This survives navigation & keeps the stream alive globally.
     val connectionManager = remember { ConnectionManager() }
+
+    // Observe connection state
     val connectionState by connectionManager.connectionState.collectAsState()
 
-    // Auto-navigate to home when connected
+    //--------- AUTO NAVIGATION TO HOME WHEN CONNECTED ----------
     LaunchedEffect(connectionState) {
-        if (connectionState == ConnectionState.CONNECTED && currentScreen == AppScreen.Connect) {
+        if (connectionState == ConnectionState.CONNECTED &&
+            (currentScreen == AppScreen.Connect || currentScreen == AppScreen.QrScanner)
+        ) {
             currentScreen = AppScreen.Home
         }
     }
 
+    //--------- SCREEN ROUTES ----------
     when (currentScreen) {
+
         AppScreen.Connect -> {
             ConnectScreen(
                 connectionManager = connectionManager,
-                onBack = { /* Stay on connect screen */ },
-                onConnected = { currentScreen = AppScreen.Home },
-                onOpenQrScanner = { currentScreen = AppScreen.QrScanner },
+                onBack = { /* Already on connect */ },
+                onConnected = {
+                    currentScreen = AppScreen.Home
+                },
+                onOpenQrScanner = {
+                    currentScreen = AppScreen.QrScanner
+                },
                 prefillIp = scannedIpAddress,
                 prefillCode = scannedConnectionCode
             )
         }
+
         AppScreen.Home -> {
             HomeScreen(
                 connectionManager = connectionManager,
@@ -73,15 +89,18 @@ fun AppNavigation() {
                     scannedConnectionCode = ""
                     currentScreen = AppScreen.Connect
                 },
-                onStartFullScreenRemoteControl = { currentScreen = AppScreen.FullScreenRemoteControl },
+                onStartFullScreenRemoteControl = {
+                    currentScreen = AppScreen.FullScreenRemoteControl
+                },
                 onStartVoice = {
-                    // TODO: Implement voice AI screen
+                    // TODO voice AI
                 },
                 onOpenSettings = {
-                    // TODO: Implement settings screen
+                    // TODO settings
                 }
             )
         }
+
         AppScreen.QrScanner -> {
             QrScannerScreen(
                 onBack = { currentScreen = AppScreen.Connect },
@@ -92,15 +111,19 @@ fun AppNavigation() {
                 }
             )
         }
+
         AppScreen.FullScreenRemoteControl -> {
             FullScreenRemoteControl(
                 connectionManager = connectionManager,
-                onBack = { currentScreen = AppScreen.Home }
+                onBack = {
+                    currentScreen = AppScreen.Home
+                }
             )
         }
     }
 }
 
+//--------- SCREEN ENUM ----------
 sealed class AppScreen {
     object Connect : AppScreen()
     object Home : AppScreen()

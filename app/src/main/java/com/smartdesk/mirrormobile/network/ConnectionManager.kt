@@ -1,9 +1,20 @@
 package com.smartdesk.mirrormobile.network
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.util.Base64
 import android.util.Log
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
@@ -21,9 +32,15 @@ class ConnectionManager {
     private val _screenFrame = MutableStateFlow<String?>(null)
     val screenFrame: StateFlow<String?> = _screenFrame.asStateFlow()
 
+    private val _screenBitmap = MutableStateFlow<Bitmap?>(null)
+    val screenBitmap: StateFlow<Bitmap?> = _screenBitmap.asStateFlow()
+
     private var currentConnectionCode: String? = null
     private var currentBaseUrl: String = "http://192.168.1.100:8000"
 
+    // Internal scope for long-running tasks that must survive Compose lifecycles
+    private val internalScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var screenJob: Job? = null
 
     private fun createApiService(baseUrl: String): PcAgentApiService {
         val logging = HttpLoggingInterceptor().apply {
@@ -49,14 +66,13 @@ class ConnectionManager {
         return Retrofit.Builder()
             .baseUrl(baseUrl)
             .client(okHttpClient)
-            .addConverterFactory(ScalarsConverterFactory.create()) // Add this FIRST
-            .addConverterFactory(GsonConverterFactory.create())   // Then add JSON converter
+            .addConverterFactory(ScalarsConverterFactory.create())
+            .addConverterFactory(GsonConverterFactory.create())
             .build()
             .create(PcAgentApiService::class.java)
     }
 
     fun updateBaseUrl(ipAddress: String) {
-        // Ensure the URL has http:// prefix
         val cleanIp = ipAddress.trim()
         this.currentBaseUrl = if (cleanIp.startsWith("http://")) {
             cleanIp
@@ -73,18 +89,13 @@ class ConnectionManager {
         return try {
             val apiService = createApiService(currentBaseUrl)
 
-            // Step 1: Test basic connection first
-            Log.d("ConnectionManager", "Testing basic connection...")
             try {
                 val testResponse = apiService.testConnection()
                 Log.d("ConnectionManager", "Basic connection test: $testResponse")
             } catch (e: Exception) {
                 Log.e("ConnectionManager", "Basic connection test failed: ${e.message}")
-                // Continue anyway, as some endpoints might work
             }
 
-            // Step 2: Send connection request
-            Log.d("ConnectionManager", "Sending connection request...")
             val requestResponse = apiService.requestConnection(
                 ConnectionRequest(code, deviceName)
             )
@@ -97,7 +108,6 @@ class ConnectionManager {
                 return false
             }
 
-            // Step 3: Wait for approval (polling with timeout)
             var approved = false
             var attempts = 0
             val maxAttempts = 45 // 45 seconds timeout
@@ -115,18 +125,16 @@ class ConnectionManager {
                         break
                     }
 
-                    // Check if we should continue waiting
                     if (statusResponse.message.contains("rejected", ignoreCase = true)) {
                         Log.e("ConnectionManager", "Connection rejected by PC")
                         _connectionState.value = ConnectionState.ERROR
                         return false
                     }
 
-                    kotlinx.coroutines.delay(1000) // Wait 1 second between checks
+                    kotlinx.coroutines.delay(1000)
                     attempts++
                 } catch (e: Exception) {
                     Log.e("ConnectionManager", "Status check $attempts failed: ${e.message}")
-                    // Continue polling even if one check fails
                     kotlinx.coroutines.delay(1000)
                     attempts++
                 }
@@ -172,10 +180,15 @@ class ConnectionManager {
         currentConnectionCode = null
         _connectionState.value = ConnectionState.DISCONNECTED
         _screenFrame.value = null
+        _screenBitmap.value = null
         _systemMetrics.value = SystemMetrics()
+        stopScreenStream()
         Log.d("ConnectionManager", "Disconnected from PC")
     }
 
+    /**
+     * Manually fetch a single screen frame (suspend). Safe for on-demand refresh.
+     */
     suspend fun fetchScreen() {
         if (_connectionState.value != ConnectionState.CONNECTED || currentConnectionCode == null) {
             Log.d("ConnectionManager", "Not connected, skipping screen fetch")
@@ -192,10 +205,31 @@ class ConnectionManager {
             Log.d("ConnectionManager", "Response length: ${response.length}")
             Log.d("ConnectionManager", "Response preview: ${response.take(100)}...")
 
-            // Validate the response
             if (response.isNotEmpty() && response.startsWith("data:image")) {
                 _screenFrame.value = response
                 Log.d("ConnectionManager", "🎉 Screen frame updated successfully!")
+
+                // Decode base64 to bitmap ONCE and expose via screenBitmap
+                try {
+                    val base64Data = response.substringAfter("base64,", "")
+                    if (base64Data.isNotEmpty()) {
+                        val imageBytes = Base64.decode(base64Data, Base64.DEFAULT)
+                        val bitmap = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
+                        if (bitmap != null) {
+                            _screenBitmap.value = bitmap
+                            Log.d("ConnectionManager", "✅ Screen bitmap decoded ${bitmap.width}x${bitmap.height}")
+                        } else {
+                            Log.e("ConnectionManager", "❌ Bitmap decode returned null")
+                            _screenBitmap.value = null
+                        }
+                    } else {
+                        Log.e("ConnectionManager", "❌ No base64 payload after prefix")
+                        _screenBitmap.value = null
+                    }
+                } catch (e: Exception) {
+                    Log.e("ConnectionManager", "❌ Error decoding base64 to bitmap: ${e.message}")
+                    _screenBitmap.value = null
+                }
             } else {
                 Log.e("ConnectionManager", "❌ Invalid screen data format")
                 Log.e("ConnectionManager", "Expected data:image, got: ${response.take(50)}")
@@ -203,6 +237,43 @@ class ConnectionManager {
         } catch (e: Exception) {
             Log.e("ConnectionManager", "❌ Failed to fetch screen: ${e.message}")
             e.printStackTrace()
+            _screenBitmap.value = null
+        }
+    }
+
+    /**
+     * Starts a periodic screen fetch in an internal scope that survives Compose lifecycle.
+     * Calling multiple times is safe (it will no-op if already running).
+     */
+    fun startScreenStream(intervalMs: Long = 500L) {
+        if (screenJob?.isActive == true) return
+        screenJob = internalScope.launch {
+            Log.d("ConnectionManager", "Starting screen stream (interval ${intervalMs}ms)")
+            while (isActive) {
+                try {
+                    if (_connectionState.value == ConnectionState.CONNECTED && currentConnectionCode != null) {
+                        fetchScreen()
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.e("ConnectionManager", "Screen stream fetch error: ${e.message}")
+                }
+                delay(intervalMs)
+            }
+        }
+    }
+
+    /**
+     * Stop the running screen stream (if any).
+     */
+    fun stopScreenStream() {
+        try {
+            screenJob?.cancel()
+            screenJob = null
+            Log.d("ConnectionManager", "Stopped screen stream")
+        } catch (e: Exception) {
+            Log.e("ConnectionManager", "Error stopping screen stream: ${e.message}")
         }
     }
 
