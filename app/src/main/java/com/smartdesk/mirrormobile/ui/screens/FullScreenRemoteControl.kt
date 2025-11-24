@@ -5,6 +5,7 @@ import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Base64
+import android.view.View
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -59,23 +60,30 @@ fun FullScreenRemoteControl(
     connectionManager: ConnectionManager,
     onBack: () -> Unit
 ) {
-    // -------------------------------------------
-    // FORCE LANDSCAPE ONLY FOR THIS SCREEN
-    // -------------------------------------------
+    // ---------------------------------------------------------------
+    // FORCE IMMERSIVE MODE + LANDSCAPE FOR THIS SCREEN ONLY
+    // ---------------------------------------------------------------
     val activity = LocalContext.current as Activity
 
     LaunchedEffect(Unit) {
         activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+
+        activity.window.decorView.systemUiVisibility =
+            View.SYSTEM_UI_FLAG_FULLSCREEN or
+                    View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
     }
+
     DisposableEffect(Unit) {
         onDispose {
             activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            activity.window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_VISIBLE
         }
     }
 
-    // -------------------------------------------
+    // ---------------------------------------------------------------
     // STATES
-    // -------------------------------------------
+    // ---------------------------------------------------------------
     val screenFrame by connectionManager.screenFrame.collectAsState()
     var screenBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var isLoading by remember { mutableStateOf(true) }
@@ -86,9 +94,9 @@ fun FullScreenRemoteControl(
 
     val coroutineScope = rememberCoroutineScope()
 
-    // -------------------------------------------
-    // AUTO HIDE CONTROLS
-    // -------------------------------------------
+    // ---------------------------------------------------------------
+    // AUTO HIDE TOP/BOTTOM CONTROLS
+    // ---------------------------------------------------------------
     LaunchedEffect(showControls) {
         if (showControls) {
             delay(3000)
@@ -96,14 +104,14 @@ fun FullScreenRemoteControl(
         }
     }
 
-    // -------------------------------------------
-    // CONVERT BASE64 TO BITMAP
-    // -------------------------------------------
+    // ---------------------------------------------------------------
+    // CONVERT BASE64 FRAME → BITMAP
+    // ---------------------------------------------------------------
     LaunchedEffect(screenFrame) {
         if (screenFrame != null && screenFrame!!.startsWith("data:image")) {
             try {
-                val base64Data = screenFrame!!.substringAfter("base64,")
-                val bytes = Base64.decode(base64Data, Base64.DEFAULT)
+                val pureBase64 = screenFrame!!.substringAfter("base64,")
+                val bytes = Base64.decode(pureBase64, Base64.DEFAULT)
                 val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                 screenBitmap = bmp
                 isLoading = false
@@ -114,29 +122,29 @@ fun FullScreenRemoteControl(
         }
     }
 
-    // -------------------------------------------
-    // AUTO REFRESH SCREEN
-    // -------------------------------------------
+    // ---------------------------------------------------------------
+    // AUTO REFRESH STREAM
+    // ---------------------------------------------------------------
     LaunchedEffect(Unit) {
-        var err = 0
+        var errors = 0
         while (true) {
             try {
                 connectionManager.fetchScreen()
-                err = 0
                 connectionError = false
+                errors = 0
             } catch (e: Exception) {
-                err++
+                errors++
                 connectionError = true
-                errorDetails = e.message ?: "Unknown error"
-                if (err > 5) break
+                errorDetails = e.message ?: "Unknown"
+                if (errors > 5) break
             }
             delay(500)
         }
     }
 
-    // -------------------------------------------
-    // UI
-    // -------------------------------------------
+    // ---------------------------------------------------------------
+    // UI LAYOUT
+    // ---------------------------------------------------------------
     Scaffold(
         topBar = {
             if (showControls) {
@@ -180,14 +188,14 @@ fun FullScreenRemoteControl(
                                     mapOf("button" to "left", "x" to "$relX", "y" to "$relY")
                                 )
 
-                                val t = System.currentTimeMillis()
-                                if (t - lastTapTime < 300) {
+                                val now = System.currentTimeMillis()
+                                if (now - lastTapTime < 300) {
                                     connectionManager.executeCommand(
                                         "mouse_double_click",
                                         mapOf("x" to "$relX", "y" to "$relY")
                                     )
                                 }
-                                lastTapTime = t
+                                lastTapTime = now
                             }
                         },
                         onLongPress = { pos ->
@@ -204,15 +212,15 @@ fun FullScreenRemoteControl(
                 }
         ) {
 
-            // -------------------------------------------
-            // SCREEN BITMAP
-            // -------------------------------------------
+            // ---------------------------------------------------------------
+            // PC SCREEN IMAGE (FIT PERFECTLY — OPTION A)
+            // ---------------------------------------------------------------
             if (screenBitmap != null) {
                 Image(
                     bitmap = screenBitmap!!.asImageBitmap(),
                     contentDescription = "PC Screen",
                     modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Fit
+                    contentScale = ContentScale.Fit   // <-- EXACTLY WHAT YOU WANT
                 )
             } else {
                 Column(
@@ -221,17 +229,13 @@ fun FullScreenRemoteControl(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     CircularProgressIndicator(color = SmartDeskAccent)
-                    Text(
-                        text = "Loading...",
-                        color = SmartDeskAccent,
-                        fontSize = 16.sp
-                    )
+                    Text("Loading...", color = SmartDeskAccent, fontSize = 16.sp)
                 }
             }
 
-            // -------------------------------------------
-            // BOTTOM CONTROLS
-            // -------------------------------------------
+            // ---------------------------------------------------------------
+            // BOTTOM CONTROLS (AUTO HIDE)
+            // ---------------------------------------------------------------
             if (showControls) {
                 Box(
                     modifier = Modifier
