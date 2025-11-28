@@ -8,29 +8,18 @@ import android.util.Base64
 import android.view.View
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Computer
-import androidx.compose.material.icons.filled.TouchApp
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CenterAlignedTopAppBar
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -46,13 +35,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.smartdesk.mirrormobile.network.ConnectionManager
-import com.smartdesk.mirrormobile.ui.theme.SmartDeskAccent
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -60,18 +49,17 @@ fun FullScreenRemoteControl(
     connectionManager: ConnectionManager,
     onBack: () -> Unit
 ) {
-    // ---------------------------------------------------------------
-    // FORCE IMMERSIVE MODE + LANDSCAPE FOR THIS SCREEN ONLY
-    // ---------------------------------------------------------------
     val activity = LocalContext.current as Activity
 
+    // FULL REAL IMMERSIVE MODE
     LaunchedEffect(Unit) {
         activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-
         activity.window.decorView.systemUiVisibility =
             View.SYSTEM_UI_FLAG_FULLSCREEN or
                     View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
-                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
+                    View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
+                    View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
     }
 
     DisposableEffect(Unit) {
@@ -81,50 +69,42 @@ fun FullScreenRemoteControl(
         }
     }
 
-    // ---------------------------------------------------------------
-    // STATES
-    // ---------------------------------------------------------------
     val screenFrame by connectionManager.screenFrame.collectAsState()
     var screenBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var isLoading by remember { mutableStateOf(true) }
-    var showControls by remember { mutableStateOf(true) }
-    var lastTapTime by remember { mutableStateOf(0L) }
     var connectionError by remember { mutableStateOf(false) }
     var errorDetails by remember { mutableStateOf("") }
 
+    var isDragging by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
 
-    // ---------------------------------------------------------------
-    // AUTO HIDE TOP/BOTTOM CONTROLS
-    // ---------------------------------------------------------------
-    LaunchedEffect(showControls) {
-        if (showControls) {
-            delay(3000)
-            showControls = false
-        }
-    }
+    var boxWidth by remember { mutableStateOf(1f) }
+    var boxHeight by remember { mutableStateOf(1f) }
 
-    // ---------------------------------------------------------------
-    // CONVERT BASE64 FRAME → BITMAP
-    // ---------------------------------------------------------------
+    // Image actual visible area
+    var imgLeft by remember { mutableStateOf(0f) }
+    var imgTop by remember { mutableStateOf(0f) }
+    var imgRight by remember { mutableStateOf(0f) }
+    var imgBottom by remember { mutableStateOf(0f) }
+
+    val movementScale = 2f
+
+    // Base64 decode
     LaunchedEffect(screenFrame) {
         if (screenFrame != null && screenFrame!!.startsWith("data:image")) {
             try {
                 val pureBase64 = screenFrame!!.substringAfter("base64,")
                 val bytes = Base64.decode(pureBase64, Base64.DEFAULT)
-                val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                screenBitmap = bmp
+                screenBitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                 isLoading = false
             } catch (e: Exception) {
                 connectionError = true
-                errorDetails = "Decode error: ${e.message}"
+                errorDetails = e.message ?: "Error"
             }
         }
     }
 
-    // ---------------------------------------------------------------
-    // AUTO REFRESH STREAM
-    // ---------------------------------------------------------------
+    // Auto refresh
     LaunchedEffect(Unit) {
         var errors = 0
         while (true) {
@@ -142,29 +122,22 @@ fun FullScreenRemoteControl(
         }
     }
 
-    // ---------------------------------------------------------------
-    // UI LAYOUT
-    // ---------------------------------------------------------------
     Scaffold(
+        containerColor = Color.Black,
         topBar = {
-            if (showControls) {
-                CenterAlignedTopAppBar(
-                    navigationIcon = {
-                        IconButton(onClick = onBack) {
-                            Icon(Icons.Default.ArrowBack, contentDescription = "Back")
-                        }
-                    },
-                    title = {
-                        Text(
-                            text = if (isLoading) "Loading PC Screen..." else "PC Remote Control",
-                            color = SmartDeskAccent,
-                            fontSize = 18.sp
-                        )
-                    },
-                    colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                        containerColor = Color.Black.copy(alpha = 0.7f)
+            // ONLY BACK BUTTON, NO TITLE
+            Box(
+                modifier = Modifier
+                    .padding(10.dp),
+                contentAlignment = Alignment.TopStart
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(
+                        Icons.Default.ArrowBack,
+                        contentDescription = "Back",
+                        tint = Color.White
                     )
-                )
+                }
             }
         }
     ) { paddingValues ->
@@ -174,128 +147,119 @@ fun FullScreenRemoteControl(
                 .fillMaxSize()
                 .background(Color.Black)
                 .padding(paddingValues)
+                .onSizeChanged { size ->
+                    boxWidth = size.width.toFloat()
+                    boxHeight = size.height.toFloat()
+
+                    // Calculate visible image area for ContentScale.Fit
+                    screenBitmap?.let { bmp ->
+                        val imgW = bmp.width.toFloat()
+                        val imgH = bmp.height.toFloat()
+                        val boxRatio = boxWidth / boxHeight
+                        val imgRatio = imgW / imgH
+
+                        if (imgRatio > boxRatio) {
+                            // Image fills width, vertical bars
+                            val scaledHeight = boxWidth / imgRatio
+                            imgLeft = 0f
+                            imgRight = boxWidth
+                            imgTop = (boxHeight - scaledHeight) / 2f
+                            imgBottom = imgTop + scaledHeight
+                        } else {
+                            // Image fills height, horizontal bars
+                            val scaledWidth = boxHeight * imgRatio
+                            imgTop = 0f
+                            imgBottom = boxHeight
+                            imgLeft = (boxWidth - scaledWidth) / 2f
+                            imgRight = imgLeft + scaledWidth
+                        }
+                    }
+                }
+                // SCROLL (two fingers)
+                .pointerInput(Unit) {
+                    detectTransformGestures { _, pan, _, _ ->
+                        if (abs(pan.x) > 0 || abs(pan.y) > 0) {
+                            coroutineScope.launch {
+                                connectionManager.executeCommand(
+                                    "mouse_scroll",
+                                    mapOf("dx" to "${pan.x}", "dy" to "${pan.y}")
+                                )
+                            }
+                        }
+                    }
+                }
+                // DRAG MOVE
+                .pointerInput(Unit) {
+                    detectDragGestures(
+                        onDragStart = { isDragging = true },
+                        onDrag = { change, drag ->
+                            change.consume()
+
+                            // Only respond if drag is inside video
+                            val p = change.position
+                            if (p.x !in imgLeft..imgRight || p.y !in imgTop..imgBottom) return@detectDragGestures
+
+                            coroutineScope.launch {
+                                connectionManager.executeCommand(
+                                    "mouse_move_relative",
+                                    mapOf(
+                                        "dx" to "${drag.x * movementScale}",
+                                        "dy" to "${drag.y * movementScale}"
+                                    )
+                                )
+                            }
+                        },
+                        onDragEnd = { isDragging = false },
+                        onDragCancel = { isDragging = false }
+                    )
+                }
+                // TAP / DOUBLE TAP / LONG PRESS -> ONLY inside video
                 .pointerInput(Unit) {
                     detectTapGestures(
                         onTap = { pos ->
-                            showControls = true
+                            if (pos.x !in imgLeft..imgRight || pos.y !in imgTop..imgBottom) return@detectTapGestures
 
-                            val relX = pos.x / size.width
-                            val relY = pos.y / size.height
+                            val relX = ((pos.x - imgLeft) / (imgRight - imgLeft)).coerceIn(0f, 1f)
+                            val relY = ((pos.y - imgTop) / (imgBottom - imgTop)).coerceIn(0f, 1f)
 
                             coroutineScope.launch {
-                                connectionManager.executeCommand(
-                                    "mouse_click",
-                                    mapOf("button" to "left", "x" to "$relX", "y" to "$relY")
-                                )
+                                connectionManager.executeCommand("mouse_move", mapOf("x" to "$relX", "y" to "$relY"))
+                            }
+                        },
+                        onDoubleTap = { pos ->
+                            if (pos.x !in imgLeft..imgRight || pos.y !in imgTop..imgBottom) return@detectTapGestures
 
-                                val now = System.currentTimeMillis()
-                                if (now - lastTapTime < 300) {
-                                    connectionManager.executeCommand(
-                                        "mouse_double_click",
-                                        mapOf("x" to "$relX", "y" to "$relY")
-                                    )
-                                }
-                                lastTapTime = now
+                            val relX = ((pos.x - imgLeft) / (imgRight - imgLeft)).coerceIn(0f, 1f)
+                            val relY = ((pos.y - imgTop) / (imgBottom - imgTop)).coerceIn(0f, 1f)
+
+                            coroutineScope.launch {
+                                connectionManager.executeCommand("mouse_move", mapOf("x" to "$relX", "y" to "$relY"))
+                                connectionManager.executeCommand("mouse_click", mapOf("button" to "left"))
                             }
                         },
                         onLongPress = { pos ->
-                            val relX = pos.x / size.width
-                            val relY = pos.y / size.height
+                            if (pos.x !in imgLeft..imgRight || pos.y !in imgTop..imgBottom) return@detectTapGestures
+
+                            val relX = ((pos.x - imgLeft) / (imgRight - imgLeft)).coerceIn(0f, 1f)
+                            val relY = ((pos.y - imgTop) / (imgBottom - imgTop)).coerceIn(0f, 1f)
+
                             coroutineScope.launch {
-                                connectionManager.executeCommand(
-                                    "mouse_click",
-                                    mapOf("button" to "right", "x" to "$relX", "y" to "$relY")
-                                )
+                                connectionManager.executeCommand("mouse_move", mapOf("x" to "$relX", "y" to "$relY"))
+                                connectionManager.executeCommand("mouse_click", mapOf("button" to "right"))
                             }
                         }
                     )
                 }
         ) {
 
-            // ---------------------------------------------------------------
-            // PC SCREEN IMAGE (FIT PERFECTLY — OPTION A)
-            // ---------------------------------------------------------------
             if (screenBitmap != null) {
                 Image(
                     bitmap = screenBitmap!!.asImageBitmap(),
-                    contentDescription = "PC Screen",
+                    contentDescription = "",
                     modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Fit   // <-- EXACTLY WHAT YOU WANT
+                    contentScale = ContentScale.Fit
                 )
-            } else {
-                Column(
-                    modifier = Modifier.align(Alignment.Center),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    CircularProgressIndicator(color = SmartDeskAccent)
-                    Text("Loading...", color = SmartDeskAccent, fontSize = 16.sp)
-                }
             }
-
-            // ---------------------------------------------------------------
-            // BOTTOM CONTROLS (AUTO HIDE)
-            // ---------------------------------------------------------------
-            if (showControls) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .background(Color.Black.copy(alpha = 0.7f))
-                        .padding(16.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        ControlActionButton(
-                            icon = Icons.Default.TouchApp,
-                            text = "Left Click"
-                        ) {
-                            coroutineScope.launch {
-                                connectionManager.executeCommand("mouse_click", mapOf("button" to "left"))
-                            }
-                        }
-
-                        ControlActionButton(
-                            icon = Icons.Default.Computer,
-                            text = "Right Click"
-                        ) {
-                            coroutineScope.launch {
-                                connectionManager.executeCommand("mouse_click", mapOf("button" to "right"))
-                            }
-                        }
-
-                        ControlActionButton(
-                            icon = Icons.Default.TouchApp,
-                            text = "Refresh"
-                        ) {
-                            coroutineScope.launch { connectionManager.fetchScreen() }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun ControlActionButton(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    text: String,
-    onClick: () -> Unit
-) {
-    Button(
-        onClick = onClick,
-        colors = ButtonDefaults.buttonColors(
-            containerColor = SmartDeskAccent,
-            contentColor = Color.Black
-        )
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(icon, contentDescription = text, modifier = Modifier.size(20.dp))
-            Text(text, fontSize = 12.sp)
         }
     }
 }
