@@ -31,8 +31,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.PointerEvent
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
@@ -51,7 +53,7 @@ fun FullScreenRemoteControl(
 ) {
     val activity = LocalContext.current as Activity
 
-    // FULL REAL IMMERSIVE MODE
+    // FULL IMMERSIVE MODE
     LaunchedEffect(Unit) {
         activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         activity.window.decorView.systemUiVisibility =
@@ -75,21 +77,30 @@ fun FullScreenRemoteControl(
     var connectionError by remember { mutableStateOf(false) }
     var errorDetails by remember { mutableStateOf("") }
 
-    var isDragging by remember { mutableStateOf(false) }
-    val coroutineScope = rememberCoroutineScope()
-
+    // Box size and image visible rect
     var boxWidth by remember { mutableStateOf(1f) }
     var boxHeight by remember { mutableStateOf(1f) }
 
-    // Image actual visible area
     var imgLeft by remember { mutableStateOf(0f) }
     var imgTop by remember { mutableStateOf(0f) }
     var imgRight by remember { mutableStateOf(0f) }
     var imgBottom by remember { mutableStateOf(0f) }
 
-    val movementScale = 2f
+    val coroutineScope = rememberCoroutineScope()
 
-    // Base64 decode
+    // Movement tuning & smoothing (A - accurate & smooth)
+    val movementScale = 0.6f               // smaller scale for 1:1-like control
+    val smoothingAlpha = 0.35f             // exponential smoothing factor (0..1)
+    val deadzone = 0.6f                    // ignore very small moves (pixels)
+
+    // Smoothing state
+    var prevDx by remember { mutableStateOf(0f) }
+    var prevDy by remember { mutableStateOf(0f) }
+
+    // Pointer count watcher (so drag is single-finger only)
+    var pointerCount by remember { mutableStateOf(0) }
+
+    // Convert base64 → bitmap
     LaunchedEffect(screenFrame) {
         if (screenFrame != null && screenFrame!!.startsWith("data:image")) {
             try {
@@ -104,7 +115,7 @@ fun FullScreenRemoteControl(
         }
     }
 
-    // Auto refresh
+    // Auto refresh stream
     LaunchedEffect(Unit) {
         var errors = 0
         while (true) {
@@ -125,18 +136,10 @@ fun FullScreenRemoteControl(
     Scaffold(
         containerColor = Color.Black,
         topBar = {
-            // ONLY BACK BUTTON, NO TITLE
-            Box(
-                modifier = Modifier
-                    .padding(10.dp),
-                contentAlignment = Alignment.TopStart
-            ) {
+            // Only back button (transparent)
+            Box(modifier = Modifier.padding(10.dp), contentAlignment = Alignment.TopStart) {
                 IconButton(onClick = onBack) {
-                    Icon(
-                        Icons.Default.ArrowBack,
-                        contentDescription = "Back",
-                        tint = Color.White
-                    )
+                    Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Color.White)
                 }
             }
         }
@@ -151,7 +154,6 @@ fun FullScreenRemoteControl(
                     boxWidth = size.width.toFloat()
                     boxHeight = size.height.toFloat()
 
-                    // Calculate visible image area for ContentScale.Fit
                     screenBitmap?.let { bmp ->
                         val imgW = bmp.width.toFloat()
                         val imgH = bmp.height.toFloat()
@@ -159,14 +161,14 @@ fun FullScreenRemoteControl(
                         val imgRatio = imgW / imgH
 
                         if (imgRatio > boxRatio) {
-                            // Image fills width, vertical bars
+                            // image full width, letterbox top/bottom
                             val scaledHeight = boxWidth / imgRatio
                             imgLeft = 0f
                             imgRight = boxWidth
                             imgTop = (boxHeight - scaledHeight) / 2f
                             imgBottom = imgTop + scaledHeight
                         } else {
-                            // Image fills height, horizontal bars
+                            // image full height, pillarbox left/right
                             val scaledWidth = boxHeight * imgRatio
                             imgTop = 0f
                             imgBottom = boxHeight
@@ -175,77 +177,133 @@ fun FullScreenRemoteControl(
                         }
                     }
                 }
-                // SCROLL (two fingers)
+                // pointer watcher to update pointerCount (for distinguishing multi-touch)
+                .pointerInput(Unit) {
+                    while (true) {
+                        awaitPointerEventScope {
+                            val event: PointerEvent = awaitPointerEvent()
+                            pointerCount = event.changes.count { it.pressed }
+                            // don't consume here; this is only a watcher
+                        }
+                    }
+                }
+                // two-finger scroll (transform gestures) -> only when pointerCount >= 2
                 .pointerInput(Unit) {
                     detectTransformGestures { _, pan, _, _ ->
-                        if (abs(pan.x) > 0 || abs(pan.y) > 0) {
+                        if (pointerCount >= 2 && (abs(pan.x) > 0f || abs(pan.y) > 0f)) {
                             coroutineScope.launch {
-                                connectionManager.executeCommand(
-                                    "mouse_scroll",
-                                    mapOf("dx" to "${pan.x}", "dy" to "${pan.y}")
-                                )
+                                try {
+                                    connectionManager.executeCommand(
+                                        "mouse_scroll",
+                                        mapOf("dx" to "${pan.x}", "dy" to "${pan.y}")
+                                    )
+                                } catch (_: Exception) {
+                                }
                             }
                         }
                     }
                 }
-                // DRAG MOVE
+                // single-finger drag (touchpad) -> only when pointerCount == 1
                 .pointerInput(Unit) {
                     detectDragGestures(
-                        onDragStart = { isDragging = true },
-                        onDrag = { change, drag ->
-                            change.consume()
+                        onDragStart = { /* nothing */ },
+                        onDrag = { change, dragAmount ->
+                            // update pointerCount was done by watcher; ensure single-finger
+                            if (pointerCount != 1) return@detectDragGestures
 
-                            // Only respond if drag is inside video
+                            // ensure drag starts inside image area (Option 1: gestures restricted to image)
                             val p = change.position
                             if (p.x !in imgLeft..imgRight || p.y !in imgTop..imgBottom) return@detectDragGestures
 
-                            coroutineScope.launch {
-                                connectionManager.executeCommand(
-                                    "mouse_move_relative",
-                                    mapOf(
-                                        "dx" to "${drag.x * movementScale}",
-                                        "dy" to "${drag.y * movementScale}"
-                                    )
-                                )
+                            // consume change so taps won't fire
+                            change.consume()
+
+                            val targetDx = dragAmount.x * movementScale
+                            val targetDy = dragAmount.y * movementScale
+
+                            // smoothing
+                            val smoothDx = prevDx * (1 - smoothingAlpha) + targetDx * smoothingAlpha
+                            val smoothDy = prevDy * (1 - smoothingAlpha) + targetDy * smoothingAlpha
+
+                            // deadzone to avoid twitch
+                            val sendDx = if (abs(smoothDx) < deadzone) 0f else smoothDx
+                            val sendDy = if (abs(smoothDy) < deadzone) 0f else smoothDy
+
+                            // update prev only with the smoothed values (so smoothing continues)
+                            prevDx = smoothDx
+                            prevDy = smoothDy
+
+                            // send command if movement is meaningful
+                            if (abs(sendDx) >= 0.01f || abs(sendDy) >= 0.01f) {
+                                coroutineScope.launch {
+                                    try {
+                                        connectionManager.executeCommand(
+                                            "mouse_move_relative",
+                                            mapOf("dx" to "$sendDx", "dy" to "$sendDy")
+                                        )
+                                    } catch (_: Exception) {
+                                    }
+                                }
                             }
                         },
-                        onDragEnd = { isDragging = false },
-                        onDragCancel = { isDragging = false }
+                        onDragEnd = {
+                            // reset smoothing state slightly to avoid jump next drag
+                            prevDx = 0f
+                            prevDy = 0f
+                        },
+                        onDragCancel = {
+                            prevDx = 0f
+                            prevDy = 0f
+                        }
                     )
                 }
-                // TAP / DOUBLE TAP / LONG PRESS -> ONLY inside video
+                // tap gestures -> only when NOT dragging (drag consumes events) and only inside image
                 .pointerInput(Unit) {
                     detectTapGestures(
-                        onTap = { pos ->
+                        onTap = { pos: Offset ->
+                            // ignore taps outside image
                             if (pos.x !in imgLeft..imgRight || pos.y !in imgTop..imgBottom) return@detectTapGestures
+                            // ignore if currently multi-touch or dragging
+                            if (pointerCount != 1) return@detectTapGestures
 
                             val relX = ((pos.x - imgLeft) / (imgRight - imgLeft)).coerceIn(0f, 1f)
                             val relY = ((pos.y - imgTop) / (imgBottom - imgTop)).coerceIn(0f, 1f)
 
                             coroutineScope.launch {
-                                connectionManager.executeCommand("mouse_move", mapOf("x" to "$relX", "y" to "$relY"))
+                                try {
+                                    connectionManager.executeCommand("mouse_move", mapOf("x" to "$relX", "y" to "$relY"))
+                                } catch (_: Exception) {
+                                }
                             }
                         },
-                        onDoubleTap = { pos ->
+                        onDoubleTap = { pos: Offset ->
                             if (pos.x !in imgLeft..imgRight || pos.y !in imgTop..imgBottom) return@detectTapGestures
+                            if (pointerCount != 1) return@detectTapGestures
 
                             val relX = ((pos.x - imgLeft) / (imgRight - imgLeft)).coerceIn(0f, 1f)
                             val relY = ((pos.y - imgTop) / (imgBottom - imgTop)).coerceIn(0f, 1f)
 
                             coroutineScope.launch {
-                                connectionManager.executeCommand("mouse_move", mapOf("x" to "$relX", "y" to "$relY"))
-                                connectionManager.executeCommand("mouse_click", mapOf("button" to "left"))
+                                try {
+                                    connectionManager.executeCommand("mouse_move", mapOf("x" to "$relX", "y" to "$relY"))
+                                    connectionManager.executeCommand("mouse_click", mapOf("button" to "left"))
+                                } catch (_: Exception) {
+                                }
                             }
                         },
-                        onLongPress = { pos ->
+                        onLongPress = { pos: Offset ->
                             if (pos.x !in imgLeft..imgRight || pos.y !in imgTop..imgBottom) return@detectTapGestures
+                            if (pointerCount != 1) return@detectTapGestures
 
                             val relX = ((pos.x - imgLeft) / (imgRight - imgLeft)).coerceIn(0f, 1f)
                             val relY = ((pos.y - imgTop) / (imgBottom - imgTop)).coerceIn(0f, 1f)
 
                             coroutineScope.launch {
-                                connectionManager.executeCommand("mouse_move", mapOf("x" to "$relX", "y" to "$relY"))
-                                connectionManager.executeCommand("mouse_click", mapOf("button" to "right"))
+                                try {
+                                    connectionManager.executeCommand("mouse_move", mapOf("x" to "$relX", "y" to "$relY"))
+                                    connectionManager.executeCommand("mouse_click", mapOf("button" to "right"))
+                                } catch (_: Exception) {
+                                }
                             }
                         }
                     )
@@ -255,7 +313,7 @@ fun FullScreenRemoteControl(
             if (screenBitmap != null) {
                 Image(
                     bitmap = screenBitmap!!.asImageBitmap(),
-                    contentDescription = "",
+                    contentDescription = "PC Screen",
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Fit
                 )
